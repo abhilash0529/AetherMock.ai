@@ -42,6 +42,11 @@ fi
 
 # 2. Check Java Version
 echo -e "\n${BOLD}[2/4] Validating Java Runtime Environment...${RESET}"
+if [ -d "/Library/Java/JavaVirtualMachines/amazon-corretto-25.jdk/Contents/Home" ]; then
+    export JAVA_HOME="/Library/Java/JavaVirtualMachines/amazon-corretto-25.jdk/Contents/Home"
+    export PATH="$JAVA_HOME/bin:$PATH"
+fi
+
 if command -v java &> /dev/null; then
     JAVA_VER=$(java -version 2>&1 | head -n 1 | cut -d'"' -f2 | cut -d'.' -f1)
     echo -e "Detected Java Version: ${CYAN}${JAVA_VER}${RESET}"

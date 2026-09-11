@@ -9,14 +9,15 @@ spring:
       enabled: true
   ai:
     openai:
-      api-key: ${SPRING_AI_OPENAI_API_KEY:mock-key-for-dev}
+      base-url: https://generativelanguage.googleapis.com/v1beta/openai/
+      api-key: ${GEMINI_API_KEY}
       chat:
+        base-url: https://generativelanguage.googleapis.com/v1beta/openai/
         options:
-          model: gpt-4o
+          model: gemini-3.6-flash
           temperature: 0.1
 
 aethermock:
   wiremock:
     port: 8089
   data-dir: src/main/resources/mock-data
-

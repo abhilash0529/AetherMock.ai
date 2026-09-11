@@ -14,9 +14,17 @@ import java.util.Set;
 public class AdminController {
 
     private final MultiServiceRegistry registry;
+    private final MultiServiceMockController mockController;
 
     public AdminController(MultiServiceRegistry registry) {
+        this(registry, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public AdminController(MultiServiceRegistry registry, 
+                           @org.springframework.beans.factory.annotation.Autowired(required = false) MultiServiceMockController mockController) {
         this.registry = registry;
+        this.mockController = mockController;
     }
 
     /**
@@ -68,6 +76,9 @@ public class AdminController {
     @PostMapping("/reload")
     public ResponseEntity<Map<String, Object>> reload() {
         registry.reload();
+        if (mockController != null) {
+            mockController.clearCache();
+        }
         return ResponseEntity.ok(Map.of(
                 "status", "SUCCESS",
                 "message", "Rescanned mock data directory",

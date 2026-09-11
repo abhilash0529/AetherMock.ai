@@ -16,6 +16,10 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import ai.aethermock.engine.ScenarioMatcher;
+
+import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -32,6 +36,7 @@ public class MultiServiceMockController {
     private final MultiServiceRegistry registry;
     private final SpecIngestionService ingestionService;
     private final MockEngine mockEngine;
+    private final ScenarioMatcher scenarioMatcher;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     // In-memory cache for synthesized WireMock specifications
@@ -39,17 +44,25 @@ public class MultiServiceMockController {
 
     public MultiServiceMockController(MultiServiceRegistry registry,
                                       SpecIngestionService ingestionService,
-                                      MockEngine mockEngine) {
+                                      MockEngine mockEngine,
+                                      ScenarioMatcher scenarioMatcher) {
         this.registry = registry;
         this.ingestionService = ingestionService;
         this.mockEngine = mockEngine;
+        this.scenarioMatcher = scenarioMatcher;
+    }
+
+    public void clearCache() {
+        stubCache.clear();
+        log.info("Cleared synthesized WireMock stub cache");
     }
 
     /**
      * Virtual multi-service ingestion gateway handling all incoming mock traffic.
      * Evaluates scenario precedence:
      * 1. Header override: X-Aether-Scenario
-     * 2. Active scenario state: context.activeScenario().get()
+     * 2. Trigger Condition matching: evaluated dynamically against incoming request payload
+     * 3. Active scenario state fallback: context.activeScenario().get()
      */
     @RequestMapping(value = "/{serviceName}/**", method = {
             RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT,
@@ -78,8 +91,22 @@ public class MultiServiceMockController {
             resolvedScenario = scenarioHeader.trim();
             log.info("Scenario resolved via [{}] header override: '{}'", SCENARIO_HEADER, resolvedScenario);
         } else {
-            resolvedScenario = context.activeScenario().get();
-            log.info("Scenario resolved via active state for service '{}': '{}'", serviceName, resolvedScenario);
+            // Check dynamic condition matching from request payload
+            Map<String, String> requestHeaders = new HashMap<>();
+            Enumeration<String> headerNames = request.getHeaderNames();
+            while (headerNames.hasMoreElements()) {
+                String hName = headerNames.nextElement();
+                requestHeaders.put(hName, request.getHeader(hName));
+            }
+
+            String matchedScenario = scenarioMatcher.matchScenario(context, requestBody, requestHeaders);
+            if (matchedScenario != null && context.scenarios().containsKey(matchedScenario)) {
+                resolvedScenario = matchedScenario;
+                log.info("Scenario dynamically matched via Trigger Condition: '{}'", resolvedScenario);
+            } else {
+                resolvedScenario = context.activeScenario().get();
+                log.info("Scenario resolved via active state fallback for service '{}': '{}'", serviceName, resolvedScenario);
+            }
         }
 
         // 3. Obtain or synthesize WireMock stub spec

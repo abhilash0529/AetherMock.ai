@@ -39,12 +39,16 @@ public class SpecIngestionService {
         if (chatClient != null) {
             try {
                 log.info("Invoking Spring AI ChatClient for service '{}'...", serviceName);
-                String systemPrompt = """
-                    You are an API virtualization engine called AetherMock.ai.
-                    Given an OpenAPI contract and a Markdown scenario specification, synthesize a precise WireMock stub specification.
-                    Ensure the response body uses WireMock Handlebars templating expressions (such as {{jsonPath request.body '$.id'}})
-                    where dynamic values need to be mirrored from the incoming request.
-                    """;
+                // CORRECT: Line terminator immediately following """
+                    String systemPrompt = """
+                        You are an API virtualization engine called AetherMock.ai.
+                        Given an OpenAPI contract and a Markdown scenario specification, synthesize a precise WireMock stub specification.
+                        CRITICAL: Always use WireMock Handlebars templating expressions for any field that should echo the request body or path.
+                        Examples:
+                        - String IDs: "{{jsonPath request.body '$.transactionId'}}"
+                        - Nested values: "{{jsonPath request.body '$.user.email'}}"
+                        Do NOT output static values like "TXN-1001" if they are present in the request body.
+                        """;
 
                 String userPrompt = String.format("""
                     Service Name: %s
@@ -73,13 +77,13 @@ public class SpecIngestionService {
             }
         }
 
-        // Deterministic synthesis fallback engine
+        // Deterministic synthesis fallback engine (Dynamic OpenAPI & Markdown parser)
         return synthesizeDeterministically(serviceName, openApiContent, scenarioMarkdown);
     }
 
     /**
-     * Fallback algorithmic engine that extracts OpenAPI endpoints, HTTP status codes,
-     * headers, and Handlebars JSON response bodies directly from the scenario and contract.
+     * Fallback algorithmic engine that dynamically extracts OpenAPI endpoints, HTTP status codes,
+     * headers, and Handlebars JSON response bodies directly from the scenario and contract without hardcoding.
      */
     WireMockStubSpec synthesizeDeterministically(String serviceName, String openApiContent, String scenarioMarkdown) {
         // 1. Extract endpoint & method
@@ -93,7 +97,7 @@ public class SpecIngestionService {
             urlPath = endpointMatcher.group(2).trim();
         } else {
             // Fall back to openapi paths
-            Pattern pathPattern = Pattern.compile("(?m)^\\s{2}(/[a-zA-Z0-9_/\\-]+):");
+            Pattern pathPattern = Pattern.compile("(?m)^\\s{2}(/[a-zA-Z0-9_/#\\-]+):");
             Matcher pathMatcher = pathPattern.matcher(openApiContent);
             if (pathMatcher.find()) {
                 urlPath = pathMatcher.group(1);
@@ -124,8 +128,8 @@ public class SpecIngestionService {
             }
         }
 
-        // 4. Synthesize Response Body with Handlebars
-        String body = buildResponseBody(serviceName, scenarioMarkdown, status);
+        // 4. Synthesize Dynamic Response Body directly from OpenAPI schema and Markdown context
+        String body = buildResponseBodyDynamic(serviceName, openApiContent, scenarioMarkdown, status);
 
         WireMockStubSpec.RequestMatcher requestMatcher = new WireMockStubSpec.RequestMatcher(
                 method,
@@ -142,51 +146,161 @@ public class SpecIngestionService {
         return new WireMockStubSpec(requestMatcher, responseDefinition);
     }
 
-    private String buildResponseBody(String serviceName, String scenarioMarkdown, int status) {
-        boolean isPayment = serviceName.contains("payment");
-        boolean isUser = serviceName.contains("user");
-
-        if (isPayment) {
-            if (status == 422 || scenarioMarkdown.toLowerCase().contains("fraud")) {
-                return """
-                    {
-                      "status": "TRIGGERED_MANUAL_REVIEW",
-                      "transactionId": "{{jsonPath request.body '$.transactionId'}}",
-                      "errorCode": "ERR_RISK_THRESHOLD"
-                    }""".trim();
-            } else {
-                return """
-                    {
-                      "status": "APPROVED",
-                      "transactionId": "{{jsonPath request.body '$.transactionId'}}",
-                      "approvalCode": "APP-99001"
-                    }""".trim();
-            }
-        } else if (isUser) {
-            if (status >= 400 || scenarioMarkdown.toLowerCase().contains("failure")) {
-                return """
-                    {
-                      "status": "FAILED",
-                      "userId": "{{jsonPath request.body '$.userId'}}",
-                      "errorCode": "ERR_DUPLICATE_EMAIL",
-                      "message": "Email already exists in system"
-                    }""".trim();
-            } else {
-                return """
-                    {
-                      "status": "SUCCESS",
-                      "userId": "{{jsonPath request.body '$.userId'}}",
-                      "message": "User registered successfully"
-                    }""".trim();
-            }
+    /**
+     * Dynamically builds a response JSON payload by inspecting OpenAPI schemas and scenario specs.
+     */
+    private String buildResponseBodyDynamic(String serviceName, String openApiContent, String scenarioMarkdown, int status) {
+        // Priority 1: Check for explicit raw JSON response blocks in the markdown scenario
+        Pattern jsonBlockPattern = Pattern.compile("```json\\s*(\\{[\\s\\S]*?\\})\\s*```");
+        Matcher jsonBlockMatcher = jsonBlockPattern.matcher(scenarioMarkdown);
+        if (jsonBlockMatcher.find()) {
+            return jsonBlockMatcher.group(1).trim();
         }
 
+        // Priority 2: Parse "## Response Body Instructions" or "- Return JSON: ..." directly from the scenario markdown
+        String fromInstructions = parseResponseBodyInstructions(scenarioMarkdown);
+        if (fromInstructions != null && !fromInstructions.isBlank()) {
+            return fromInstructions;
+        }
+
+        // Priority 3: Dynamically parse properties from OpenAPI YAML schema
+        Map<String, String> schemaFields = extractOpenApiSchemaProperties(openApiContent, status);
+
+        if (!schemaFields.isEmpty()) {
+            StringBuilder jsonBuilder = new StringBuilder("{\n");
+            int count = 0;
+            int total = schemaFields.size();
+
+            for (Map.Entry<String, String> entry : schemaFields.entrySet()) {
+                String key = entry.getKey();
+                String type = entry.getValue();
+                String value = generateDynamicFieldValue(key, type, status, scenarioMarkdown);
+
+                jsonBuilder.append(String.format("  \"%s\": %s", key, value));
+                count++;
+                if (count < total) {
+                    jsonBuilder.append(",");
+                }
+                jsonBuilder.append("\n");
+            }
+            jsonBuilder.append("}");
+            return jsonBuilder.toString();
+        }
+
+        // Priority 3: Generic dynamic payload fallback
+        String genericStatus = status < 400 ? "SUCCESS" : "ERROR";
         return String.format("""
             {
               "status": "%s",
               "service": "%s",
               "timestamp": "{{now format='yyyy-MM-dd\\'T\\'HH:mm:ss.SSSZ'}}"
-            }""", status < 400 ? "SUCCESS" : "ERROR", serviceName).trim();
+            }""", genericStatus, serviceName).trim();
+    }
+
+    /**
+     * Parses natural language 'Response Body Instructions' from Markdown into Handlebars JSON.
+     * Handles patterns like:
+     * - Return JSON: status = "APPROVED", mirror transactionId from request, generate approvalCode = "APP-99001".
+     */
+    private String parseResponseBodyInstructions(String scenarioMarkdown) {
+        Pattern returnJsonPattern = Pattern.compile("(?i)(?:Return\\s+JSON:?|Response\\s+Body\\s+Instructions:?)\\s*([^\n\r]+)");
+        Matcher matcher = returnJsonPattern.matcher(scenarioMarkdown);
+        if (!matcher.find()) {
+            return null;
+        }
+
+        String instructionLine = matcher.group(1);
+        Map<String, String> fields = new LinkedHashMap<>();
+
+        // Match key = "value" or key = value
+        Pattern keyValuePattern = Pattern.compile("([a-zA-Z0-9_]+)\\s*=\\s*\"([^\"]*)\"");
+        Matcher kvMatcher = keyValuePattern.matcher(instructionLine);
+        while (kvMatcher.find()) {
+            fields.put(kvMatcher.group(1), "\"" + kvMatcher.group(2) + "\"");
+        }
+
+        // Match mirror <field> from request
+        Pattern mirrorPattern = Pattern.compile("(?i)mirror\\s+([a-zA-Z0-9_]+)\\s+from\\s+request");
+        Matcher mirrorMatcher = mirrorPattern.matcher(instructionLine);
+        while (mirrorMatcher.find()) {
+            String field = mirrorMatcher.group(1);
+            fields.put(field, String.format("\"{{jsonPath request.body '$.%s'}}\"", field));
+        }
+
+        if (fields.isEmpty()) {
+            return null;
+        }
+
+        StringBuilder sb = new StringBuilder("{\n");
+        int count = 0;
+        for (Map.Entry<String, String> entry : fields.entrySet()) {
+            sb.append(String.format("  \"%s\": %s", entry.getKey(), entry.getValue()));
+            count++;
+            if (count < fields.size()) {
+                sb.append(",");
+            }
+            sb.append("\n");
+        }
+        sb.append("}");
+        return sb.toString();
+    }
+
+    /**
+     * Extracts YAML response properties for the targeted HTTP status from the OpenAPI specification.
+     */
+    private Map<String, String> extractOpenApiSchemaProperties(String openApiContent, int status) {
+        Map<String, String> properties = new LinkedHashMap<>();
+        
+        // Search for target status code block or default to schema properties
+        Pattern propPattern = Pattern.compile("(?m)^\\s{8,12}([a-zA-Z0-9_]+):\\s*\\n\\s+type:\\s*([a-zA-Z]+)");
+        Matcher matcher = propPattern.matcher(openApiContent);
+
+        while (matcher.find()) {
+            properties.put(matcher.group(1), matcher.group(2).toLowerCase());
+        }
+
+        // Fallback property scanning if indentation varies
+        if (properties.isEmpty()) {
+            Pattern simplePropPattern = Pattern.compile("(?m)^\\s+([a-zA-Z0-9_]+):\\s*\\n\\s+type:\\s*([a-zA-Z]+)");
+            Matcher simpleMatcher = simplePropPattern.matcher(openApiContent);
+            while (simpleMatcher.find()) {
+                properties.put(simpleMatcher.group(1), simpleMatcher.group(2).toLowerCase());
+            }
+        }
+
+        return properties;
+    }
+
+    /**
+     * Generates Handlebars request-mirroring expressions or dynamic mock values based on key/type.
+     */
+    private String generateDynamicFieldValue(String key, String type, int status, String scenarioMarkdown) {
+        String keyLower = key.toLowerCase();
+
+        // Handlebars mirroring for ID/Key parameters present in requests
+        if (keyLower.contains("id") || keyLower.contains("code") || keyLower.contains("key")) {
+            return String.format("\"{{jsonPath request.body '$.%s'}}\"", key);
+        }
+
+        if (keyLower.equals("status")) {
+            if (status >= 400 || scenarioMarkdown.toLowerCase().contains("fail") || scenarioMarkdown.toLowerCase().contains("fraud")) {
+                return "\"FAILED\"";
+            }
+            return "\"APPROVED\"";
+        }
+
+        if (keyLower.contains("error") || keyLower.contains("message")) {
+            if (status >= 400) {
+                return "\"ERR_PROCESSING_FAILED\"";
+            }
+            return "\"Operation processed successfully\"";
+        }
+
+        return switch (type) {
+            case "integer", "number" -> "1000";
+            case "boolean" -> status < 400 ? "true" : "false";
+            case "array" -> "[]";
+            default -> String.format("\"MOCK_%s\"", key.toUpperCase());
+        };
     }
 }
-

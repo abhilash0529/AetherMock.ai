@@ -34,10 +34,13 @@ class AetherMockApplicationTests {
     @Autowired
     private MockEngine mockEngine;
 
+    @Autowired
+    private ai.aethermock.engine.ScenarioMatcher scenarioMatcher;
+
     @BeforeEach
     void setUp() {
-        AdminController adminController = new AdminController(registry);
-        MultiServiceMockController mockController = new MultiServiceMockController(registry, ingestionService, mockEngine);
+        MultiServiceMockController mockController = new MultiServiceMockController(registry, ingestionService, mockEngine, scenarioMatcher);
+        AdminController adminController = new AdminController(registry, mockController);
         mockMvc = MockMvcBuilders.standaloneSetup(adminController, mockController).build();
     }
 
@@ -176,6 +179,51 @@ class AetherMockApplicationTests {
                 .andExpect(jsonPath("$.status").value("FAILED"))
                 .andExpect(jsonPath("$.userId").value("USR-4091"))
                 .andExpect(jsonPath("$.errorCode").value("ERR_DUPLICATE_EMAIL"));
+    }
+
+    @Test
+    void mockController_DynamicTriggerConditionMatchesFraudWithoutHeader() throws Exception {
+        // No X-Aether-Scenario header supplied!
+        // Payload has high amount (20033333333) and currency CAD
+        String requestPayload = """
+            {
+              "transactionId": "tr-t-10013",
+              "amount": 20033333333,
+              "currency": "CAD"
+            }
+            """;
+
+        mockMvc.perform(post("/mock/payment-service/v1/payments/process")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestPayload))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(header().string("X-Aether-Scenario", "high-value-fraud"))
+                .andExpect(header().string("X-Risk-Level", "HIGH"))
+                .andExpect(jsonPath("$.status").value("TRIGGERED_MANUAL_REVIEW"))
+                .andExpect(jsonPath("$.transactionId").value("tr-t-10013"))
+                .andExpect(jsonPath("$.errorCode").value("ERR_RISK_THRESHOLD"));
+    }
+
+    @Test
+    void mockController_DynamicTriggerConditionMatchesStandardSuccessWithoutHeader() throws Exception {
+        // No X-Aether-Scenario header supplied!
+        // Payload has valid standard amount (500) and currency USD
+        String requestPayload = """
+            {
+              "transactionId": "tr-t-10014",
+              "amount": 500.00,
+              "currency": "USD"
+            }
+            """;
+
+        mockMvc.perform(post("/mock/payment-service/v1/payments/process")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestPayload))
+                .andExpect(status().isOk())
+                .andExpect(header().string("X-Aether-Scenario", "standard-success"))
+                .andExpect(jsonPath("$.status").value("APPROVED"))
+                .andExpect(jsonPath("$.transactionId").value("tr-t-10014"))
+                .andExpect(jsonPath("$.approvalCode").value("APP-99001"));
     }
 
     @Test
