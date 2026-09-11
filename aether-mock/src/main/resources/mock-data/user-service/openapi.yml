@@ -26,3 +26,70 @@ paths:
         '400':
           description: Onboarding Validation Failure
 
+  /v1/users/search:
+    get:
+      summary: Search users by username
+      parameters:
+        - name: username
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Username query parameter to fetch matching accounts
+      responses:
+        '200':
+          description: Successfully retrieved list of users matching username
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        userId:
+                          type: string
+                        username:
+                          type: string
+                        email:
+                          type: string
+                        status:
+                          type: string
+                  totalResults:
+                    type: integer
+        '400':
+          description: Missing or invalid username query parameter
+
+  /v1/users/{userId}:
+    get:
+      summary: Fetch user details by ID
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Unique identifier of the user
+      responses:
+        '200':
+          description: User details retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  userId:
+                    type: string
+                  username:
+                    type: string
+                  email:
+                    type: string
+                  status:
+                    type: string
+                  createdAt:
+                    type: string
+                    format: date-time
+        '404':
+          description: User not found

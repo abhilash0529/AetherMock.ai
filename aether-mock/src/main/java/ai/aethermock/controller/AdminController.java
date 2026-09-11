@@ -21,8 +21,8 @@ public class AdminController {
     }
 
     @org.springframework.beans.factory.annotation.Autowired
-    public AdminController(MultiServiceRegistry registry, 
-                           @org.springframework.beans.factory.annotation.Autowired(required = false) MultiServiceMockController mockController) {
+    public AdminController(MultiServiceRegistry registry,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) MultiServiceMockController mockController) {
         this.registry = registry;
         this.mockController = mockController;
     }
@@ -39,8 +39,7 @@ public class AdminController {
             response.put(name, new ServiceSummary(
                     name,
                     ctx.scenarios().keySet(),
-                    ctx.activeScenario().get()
-            ));
+                    ctx.activeScenario().get()));
         });
 
         return ResponseEntity.ok(response);
@@ -59,14 +58,12 @@ public class AdminController {
             return ResponseEntity.ok(Map.of(
                     "service", serviceName,
                     "activeScenario", scenarioName,
-                    "status", "UPDATED"
-            ));
+                    "status", "UPDATED"));
         } else {
             return ResponseEntity.badRequest().body(Map.of(
                     "error", "Service or scenario not found",
                     "service", serviceName,
-                    "requestedScenario", scenarioName
-            ));
+                    "requestedScenario", scenarioName));
         }
     }
 
@@ -82,14 +79,12 @@ public class AdminController {
         return ResponseEntity.ok(Map.of(
                 "status", "SUCCESS",
                 "message", "Rescanned mock data directory",
-                "registeredServicesCount", registry.getAllServices().size()
-        ));
+                "registeredServicesCount", registry.getAllServices().size()));
     }
 
     public record ServiceSummary(
             String serviceName,
             Set<String> availableScenarios,
-            String activeScenario
-    ) {}
+            String activeScenario) {
+    }
 }
-

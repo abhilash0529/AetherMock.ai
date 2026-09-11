@@ -39,7 +39,8 @@ class AetherMockApplicationTests {
 
     @BeforeEach
     void setUp() {
-        MultiServiceMockController mockController = new MultiServiceMockController(registry, ingestionService, mockEngine, scenarioMatcher);
+        MultiServiceMockController mockController = new MultiServiceMockController(registry, ingestionService,
+                mockEngine, scenarioMatcher);
         AdminController adminController = new AdminController(registry, mockController);
         mockMvc = MockMvcBuilders.standaloneSetup(adminController, mockController).build();
     }
@@ -71,14 +72,16 @@ class AetherMockApplicationTests {
 
         // Test Standard Success
         String successMd = paymentCtx.scenarios().get("standard-success");
-        WireMockStubSpec successSpec = ingestionService.synthesizeStub("payment-service", paymentCtx.openApiContent(), successMd);
+        WireMockStubSpec successSpec = ingestionService.synthesizeStub("payment-service", paymentCtx.openApiContent(),
+                successMd);
         assertThat(successSpec.response().status()).isEqualTo(200);
         assertThat(successSpec.response().body()).contains("APPROVED");
         assertThat(successSpec.response().body()).contains("{{jsonPath request.body '$.transactionId'}}");
 
         // Test High-Value Fraud
         String fraudMd = paymentCtx.scenarios().get("high-value-fraud");
-        WireMockStubSpec fraudSpec = ingestionService.synthesizeStub("payment-service", paymentCtx.openApiContent(), fraudMd);
+        WireMockStubSpec fraudSpec = ingestionService.synthesizeStub("payment-service", paymentCtx.openApiContent(),
+                fraudMd);
         assertThat(fraudSpec.response().status()).isEqualTo(422);
         assertThat(fraudSpec.response().body()).contains("TRIGGERED_MANUAL_REVIEW");
         assertThat(fraudSpec.response().headers()).containsEntry("X-Risk-Level", "HIGH");
@@ -95,7 +98,7 @@ class AetherMockApplicationTests {
     @Test
     void adminController_SwitchScenarioDynamically() throws Exception {
         mockMvc.perform(post("/admin/services/payment-service/scenario")
-                        .param("scenarioName", "high-value-fraud"))
+                .param("scenarioName", "high-value-fraud"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("UPDATED"))
                 .andExpect(jsonPath("$.activeScenario").value("high-value-fraud"));
@@ -120,16 +123,16 @@ class AetherMockApplicationTests {
         registry.setActiveScenario("payment-service", "standard-success");
 
         String requestPayload = """
-            {
-              "transactionId": "TXN-98765",
-              "amount": 500.00,
-              "currency": "USD"
-            }
-            """;
+                {
+                  "transactionId": "TXN-98765",
+                  "amount": 500.00,
+                  "currency": "USD"
+                }
+                """;
 
         mockMvc.perform(post("/mock/payment-service/v1/payments/process")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(requestPayload))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestPayload))
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-Aether-Scenario", "standard-success"))
                 .andExpect(jsonPath("$.status").value("APPROVED"))
@@ -143,17 +146,17 @@ class AetherMockApplicationTests {
         registry.setActiveScenario("payment-service", "standard-success");
 
         String requestPayload = """
-            {
-              "transactionId": "TXN-FRAUD-001",
-              "amount": 25000.00,
-              "currency": "USD"
-            }
-            """;
+                {
+                  "transactionId": "TXN-FRAUD-001",
+                  "amount": 25000.00,
+                  "currency": "USD"
+                }
+                """;
 
         mockMvc.perform(post("/mock/payment-service/v1/payments/process")
-                        .header("X-Aether-Scenario", "high-value-fraud")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(requestPayload))
+                .header("X-Aether-Scenario", "high-value-fraud")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestPayload))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(header().string("X-Aether-Scenario", "high-value-fraud"))
                 .andExpect(header().string("X-Risk-Level", "HIGH"))
@@ -165,16 +168,16 @@ class AetherMockApplicationTests {
     @Test
     void mockController_UserServiceOnboardingFailure() throws Exception {
         String requestPayload = """
-            {
-              "userId": "USR-4091",
-              "email": "existing@corp.com",
-              "username": "existinguser"
-            }
-            """;
+                {
+                  "userId": "USR-4091",
+                  "email": "existing@corp.com",
+                  "username": "existinguser"
+                }
+                """;
 
         mockMvc.perform(post("/mock/user-service/v1/users/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(requestPayload))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestPayload))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.status").value("FAILED"))
                 .andExpect(jsonPath("$.userId").value("USR-4091"))
@@ -186,16 +189,16 @@ class AetherMockApplicationTests {
         // No X-Aether-Scenario header supplied!
         // Payload has high amount (20033333333) and currency CAD
         String requestPayload = """
-            {
-              "transactionId": "tr-t-10013",
-              "amount": 20033333333,
-              "currency": "CAD"
-            }
-            """;
+                {
+                  "transactionId": "tr-t-10013",
+                  "amount": 20033333333,
+                  "currency": "CAD"
+                }
+                """;
 
         mockMvc.perform(post("/mock/payment-service/v1/payments/process")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(requestPayload))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestPayload))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(header().string("X-Aether-Scenario", "high-value-fraud"))
                 .andExpect(header().string("X-Risk-Level", "HIGH"))
@@ -209,16 +212,16 @@ class AetherMockApplicationTests {
         // No X-Aether-Scenario header supplied!
         // Payload has valid standard amount (500) and currency USD
         String requestPayload = """
-            {
-              "transactionId": "tr-t-10014",
-              "amount": 500.00,
-              "currency": "USD"
-            }
-            """;
+                {
+                  "transactionId": "tr-t-10014",
+                  "amount": 500.00,
+                  "currency": "USD"
+                }
+                """;
 
         mockMvc.perform(post("/mock/payment-service/v1/payments/process")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(requestPayload))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestPayload))
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-Aether-Scenario", "standard-success"))
                 .andExpect(jsonPath("$.status").value("APPROVED"))
@@ -229,8 +232,8 @@ class AetherMockApplicationTests {
     @Test
     void mockController_UnknownServiceReturns404() throws Exception {
         mockMvc.perform(post("/mock/non-existent-service/v1/test")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{}"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").exists());
     }

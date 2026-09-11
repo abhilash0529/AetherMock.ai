@@ -24,6 +24,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.Collections;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -54,8 +55,7 @@ public class MockEngine {
                             TemplateEngine.defaultTemplateEngine(),
                             true,
                             null,
-                            java.util.Collections.emptyList()
-                    ));
+                            Collections.emptyList()));
 
             wireMockServer = new WireMockServer(options);
             wireMockServer.start();
@@ -118,8 +118,12 @@ public class MockEngine {
     }
 
     private MappingBuilder createMappingBuilder(String method, String prefixedUrl, String targetUrl) {
+        // Safely convert path template parameters like {userId} to [^/]+ and quote remaining literals
+        String regexPrefixed = toRegexPattern(prefixedUrl);
+        String regexTarget = toRegexPattern(targetUrl);
+
         // Regex pattern to match either /mock/{serviceName}/path or /path
-        String pathRegex = ".*(" + PatternQuote(prefixedUrl) + "|" + PatternQuote(targetUrl) + ").*";
+        String pathRegex = ".*(" + regexPrefixed + "|" + regexTarget + ").*";
 
         return switch (method) {
             case "POST" -> WireMock.post(WireMock.urlMatching(pathRegex));
@@ -131,8 +135,22 @@ public class MockEngine {
         };
     }
 
-    private String PatternQuote(String s) {
-        return s.replace(".", "\\.").replace("?", "\\?");
+    /**
+     * Converts raw REST paths into safe regex patterns.
+     * Replaces dynamic path variables like {userId} with [^/]+ 
+     * and wraps literal URL segments inside \Q...\E.
+     */
+    private String toRegexPattern(String url) {
+        if (url == null || url.isBlank()) {
+            return "";
+        }
+        // Escape existing \E inside URL string to avoid breaking out of regex quotation block
+        String sanitized = url.replace("\\E", "\\E\\\\E\\Q");
+
+        // Convert path parameter syntax like {userId} or {id} into wildcard single path segment regex [^/]+
+        String withWildcards = sanitized.replaceAll("\\{[^}]+\\}", "\\\\E[^/]+\\\\Q");
+
+        return "\\Q" + withWildcards + "\\E";
     }
 
     private void persistMappingToDisk(String serviceName, String scenarioName, WireMockStubSpec spec) {
@@ -157,6 +175,7 @@ public class MockEngine {
     }
 
     public int getPort() {
-        return wireMockServer != null && wireMockServer.isRunning() ? wireMockServer.port() : config.getWiremock().getPort();
+        return wireMockServer != null && wireMockServer.isRunning() ? wireMockServer.port()
+                : config.getWiremock().getPort();
     }
 }

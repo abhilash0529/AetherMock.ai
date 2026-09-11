@@ -18,13 +18,17 @@ import java.util.regex.Pattern;
 public class ScenarioMatcher {
 
     private static final Logger log = LoggerFactory.getLogger(ScenarioMatcher.class);
-    private static final Pattern CONDITION_PATTERN = Pattern.compile("(?i)(?:Condition|Trigger Condition):?\\s*\\**\\s*([^\\n\\r]+)");
-    
-    // Matches: Amount > 10000, Amount <= 10000.00, amount is greater than 10000, etc.
+
+    // Escaped literal Markdown asterisks properly (\* instead of dangling *)
+    private static final Pattern ENDPOINT_PATTERN = Pattern
+            .compile("(?i)-\\s*\\**Endpoint:\\**\\s*([A-Z]+)\\s+([^\\s\\n\\r]+)");
+
+    private static final Pattern CONDITION_PATTERN = Pattern
+            .compile("(?i)(?:Condition|Trigger Condition):?\\s*\\**\\s*([^\\n\\r]+)");
+
     private static final Pattern NUMERIC_COND_PATTERN = Pattern.compile(
             "(?i)([a-zA-Z0-9_]+)\\s*(?:is\\s+)?(>=|<=|>|<|==|!=|=|greater than or equal to|less than or equal to|greater than|less than|equals|is)\\s*([0-9]+(?:\\.[0-9]+)?)");
-    
-    // Matches: currency is "USD", currency == 'USD', currency equals "USD"
+
     private static final Pattern STRING_COND_PATTERN = Pattern.compile(
             "(?i)([a-zA-Z0-9_]+)\\s*(?:is|=|==|equals)\\s*[\"']([^\"']+)[\"']");
 
@@ -44,20 +48,34 @@ public class ScenarioMatcher {
     }
 
     /**
-     * Evaluates incoming request against all scenario trigger conditions for the service.
-     * Returns the matching scenario name, or null if no condition specifically matches.
+     * Backward-compatible matchScenario overload.
      */
     public String matchScenario(ServiceContext context, String requestBody, Map<String, String> headers) {
-        if (context == null || context.scenarios().isEmpty() || requestBody == null || requestBody.isBlank()) {
+        return matchScenario(context, null, null, null, requestBody, headers);
+    }
+
+    /**
+     * Fully dynamic Scenario Matcher evaluating Method, URI, Query Parameters, Request Body, and AI logic.
+     */
+    public String matchScenario(ServiceContext context, String httpMethod, String requestUri, String queryString,
+                                String requestBody, Map<String, String> headers) {
+
+        if (context == null || context.scenarios().isEmpty()) {
             return null;
         }
 
-        // 1. Try AI-driven semantic condition matching if available
+        // 1. Filter candidate scenarios dynamically by Route (HTTP Method & URI path)
+        Map<String, String> candidateScenarios = filterScenariosByRoute(context.scenarios(), httpMethod, requestUri);
+        if (candidateScenarios.isEmpty()) {
+            candidateScenarios = context.scenarios(); // Fallback to all if route filtering yields empty
+        }
+
+        // 2. Try AI-driven semantic condition matching if available
         if (chatClient != null) {
             try {
-                String aiMatch = matchViaAi(context, requestBody);
+                String aiMatch = matchViaAi(candidateScenarios, httpMethod, requestUri, queryString, requestBody);
                 if (aiMatch != null && context.scenarios().containsKey(aiMatch)) {
-                    log.info("Spring AI resolved scenario from trigger conditions: '{}'", aiMatch);
+                    log.info("Spring AI dynamically resolved scenario: '{}'", aiMatch);
                     return aiMatch;
                 }
             } catch (Exception e) {
@@ -65,44 +83,70 @@ public class ScenarioMatcher {
             }
         }
 
-        // 2. Deterministic rule-based evaluation of Markdown Trigger Conditions
-        return matchDeterministically(context, requestBody);
+        // 3. Deterministic evaluation of candidate Markdown Trigger Conditions
+        return matchDeterministically(candidateScenarios, queryString, requestBody);
     }
 
-    String matchDeterministically(ServiceContext context, String requestBody) {
-        JsonNode rootNode;
-        try {
-            rootNode = objectMapper.readTree(requestBody);
-        } catch (Exception e) {
-            return null;
+    /**
+     * Filters Markdown scenario files dynamically by extracting the Method and Target Endpoint.
+     */
+    private Map<String, String> filterScenariosByRoute(Map<String, String> scenarios, String method, String uri) {
+        if (method == null || uri == null) {
+            return scenarios;
         }
 
-        if (rootNode == null || !rootNode.isObject()) {
-            return null;
+        Map<String, String> matches = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : scenarios.entrySet()) {
+            String markdown = entry.getValue();
+            Matcher matcher = ENDPOINT_PATTERN.matcher(markdown);
+            if (matcher.find()) {
+                String targetMethod = matcher.group(1).trim();
+                String targetEndpoint = matcher.group(2).trim();
+
+                // Replace path parameters like {userId} with regex wildcard
+                String normalizedTarget = Pattern.quote(targetEndpoint).replaceAll("\\\\\\{[^}]+\\\\}", "\\\\E[^/]+\\\\Q");
+                
+                if (method.equalsIgnoreCase(targetMethod) && uri.matches(".*" + normalizedTarget + ".*")) {
+                    matches.put(entry.getKey(), markdown);
+                }
+            }
+        }
+        return matches;
+    }
+
+    String matchDeterministically(Map<String, String> scenarios, String queryString, String requestBody) {
+        JsonNode rootNode = null;
+        if (requestBody != null && !requestBody.isBlank()) {
+            try {
+                rootNode = objectMapper.readTree(requestBody);
+            } catch (Exception ignored) {
+            }
         }
 
-        Map<String, String> scenarios = context.scenarios();
+        // Parse query string parameters into a JSON Node for GET requests
+        if (rootNode == null && queryString != null && !queryString.isBlank()) {
+            Map<String, String> queryMap = parseQueryString(queryString);
+            rootNode = objectMapper.valueToTree(queryMap);
+        }
 
-        // Separate edge-case / error / fraud scenarios from happy-path/standard scenarios
-        // Specific boundary/fraud conditions are evaluated with higher priority
         List<String> scenarioKeys = new ArrayList<>(scenarios.keySet());
-        scenarioKeys.sort((a, b) -> {
-            boolean aIsSpecial = isSpecializedScenario(a);
-            boolean bIsSpecial = isSpecializedScenario(b);
-            if (aIsSpecial && !bIsSpecial) return -1;
-            if (!aIsSpecial && bIsSpecial) return 1;
-            return 0;
-        });
+        scenarioKeys.sort((a, b) -> Boolean.compare(isSpecializedScenario(b), isSpecializedScenario(a)));
 
         for (String scenarioName : scenarioKeys) {
             String scenarioMarkdown = scenarios.get(scenarioName);
             String conditionText = extractConditionText(scenarioMarkdown);
 
             if (conditionText != null && !conditionText.isBlank()) {
-                if (evaluateCondition(conditionText, rootNode)) {
-                    log.info("Request payload matched trigger condition for scenario '{}': [{}]", scenarioName, conditionText);
+                if (rootNode != null && evaluateCondition(conditionText, rootNode)) {
+                    log.info("Request matched trigger condition for scenario '{}': [{}]", scenarioName, conditionText);
+                    return scenarioName;
+                } else if (conditionText.toLowerCase().contains("present") || conditionText.toLowerCase().contains("query")) {
+                    log.info("Route-matched scenario without body evaluated: '{}'", scenarioName);
                     return scenarioName;
                 }
+            } else {
+                // If scenario has no restrictive trigger condition and path matches, return as standard scenario
+                return scenarioName;
             }
         }
 
@@ -111,25 +155,18 @@ public class ScenarioMatcher {
 
     private boolean isSpecializedScenario(String name) {
         String n = name.toLowerCase();
-        return n.contains("fraud") || n.contains("fail") || n.contains("error") 
+        return n.contains("fraud") || n.contains("fail") || n.contains("error")
                 || n.contains("reject") || n.contains("invalid") || n.contains("limit");
     }
 
     private String extractConditionText(String markdown) {
         Matcher matcher = CONDITION_PATTERN.matcher(markdown);
-        if (matcher.find()) {
-            return matcher.group(1).trim();
-        }
-        return null;
+        return matcher.find() ? matcher.group(1).trim() : null;
     }
 
-    /**
-     * Evaluates a condition expression against the JSON request body.
-     */
     boolean evaluateCondition(String conditionText, JsonNode rootNode) {
         String cond = conditionText.trim();
 
-        // 1. Evaluate Numeric comparisons (e.g. Amount > 10000.00, Amount <= 10000.00)
         Matcher numMatcher = NUMERIC_COND_PATTERN.matcher(cond);
         boolean hasNumericMatch = false;
         boolean numericResult = true;
@@ -146,14 +183,12 @@ public class ScenarioMatcher {
                 break;
             }
 
-            double actualVal = valNode.asDouble();
-            if (!compareNumbers(actualVal, op, targetVal)) {
+            if (!compareNumbers(valNode.asDouble(), op, targetVal)) {
                 numericResult = false;
                 break;
             }
         }
 
-        // 2. Evaluate String equality (e.g. currency is "USD")
         Matcher strMatcher = STRING_COND_PATTERN.matcher(cond);
         boolean hasStringMatch = false;
         boolean stringResult = true;
@@ -164,13 +199,7 @@ public class ScenarioMatcher {
             String expectedVal = strMatcher.group(2);
 
             JsonNode valNode = findFieldCaseInsensitive(rootNode, fieldName);
-            if (valNode == null) {
-                stringResult = false;
-                break;
-            }
-
-            String actualVal = valNode.asText();
-            if (!actualVal.equalsIgnoreCase(expectedVal)) {
+            if (valNode == null || !valNode.asText().equalsIgnoreCase(expectedVal)) {
                 stringResult = false;
                 break;
             }
@@ -180,14 +209,13 @@ public class ScenarioMatcher {
             return numericResult && stringResult;
         }
 
-        // 3. Evaluate heuristic text conditions (e.g. "Email already registered or invalid domain")
+        // Presence check for query params (e.g. "username is present")
         String condLower = cond.toLowerCase();
-        if (condLower.contains("email") && (condLower.contains("registered") || condLower.contains("invalid") || condLower.contains("duplicate"))) {
-            JsonNode emailNode = findFieldCaseInsensitive(rootNode, "email");
-            if (emailNode != null) {
-                String email = emailNode.asText().toLowerCase();
-                return email.contains("existing") || email.contains("duplicate") 
-                        || email.contains("invalid") || email.contains("fail") || email.contains("taken");
+        if (condLower.contains("present")) {
+            for (String part : condLower.split("\\s+")) {
+                if (findFieldCaseInsensitive(rootNode, part) != null) {
+                    return true;
+                }
             }
         }
 
@@ -195,9 +223,8 @@ public class ScenarioMatcher {
     }
 
     private JsonNode findFieldCaseInsensitive(JsonNode root, String fieldName) {
-        if (root.has(fieldName)) {
-            return root.get(fieldName);
-        }
+        if (root == null) return null;
+        if (root.has(fieldName)) return root.get(fieldName);
         Iterator<String> fieldNames = root.fieldNames();
         while (fieldNames.hasNext()) {
             String name = fieldNames.next();
@@ -233,18 +260,35 @@ public class ScenarioMatcher {
         };
     }
 
-    private String matchViaAi(ServiceContext context, String requestBody) {
-        StringBuilder prompt = new StringBuilder();
-        prompt.append("Given an incoming HTTP JSON request payload:\n");
-        prompt.append(requestBody).append("\n\n");
-        prompt.append("Evaluate against these scenarios and their trigger conditions:\n");
+    private Map<String, String> parseQueryString(String queryString) {
+        Map<String, String> map = new HashMap<>();
+        if (queryString != null && !queryString.isBlank()) {
+            for (String param : queryString.split("&")) {
+                String[] pair = param.split("=");
+                if (pair.length > 0) {
+                    map.put(pair[0], pair.length > 1 ? pair[1] : "");
+                }
+            }
+        }
+        return map;
+    }
 
-        for (Map.Entry<String, String> entry : context.scenarios().entrySet()) {
+    private String matchViaAi(Map<String, String> candidateScenarios, String method, String uri,
+                               String queryString, String requestBody) {
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("Given an incoming HTTP Request:\n");
+        prompt.append("Method: ").append(method != null ? method : "N/A").append("\n");
+        prompt.append("URI: ").append(uri != null ? uri : "N/A").append("\n");
+        prompt.append("Query String: ").append(queryString != null ? queryString : "N/A").append("\n");
+        prompt.append("Body: ").append(requestBody != null ? requestBody : "N/A").append("\n\n");
+
+        prompt.append("Evaluate against these target candidate scenarios:\n");
+        for (Map.Entry<String, String> entry : candidateScenarios.entrySet()) {
             prompt.append("- Scenario: '").append(entry.getKey()).append("'\n");
             prompt.append("  Rule: ").append(entry.getValue()).append("\n");
         }
 
-        prompt.append("\nWhich scenario's condition matches this request? Return ONLY the scenario key name, or NONE.");
+        prompt.append("\nWhich scenario key best matches this HTTP request? Return ONLY the scenario key name, or NONE.");
 
         String response = chatClient.prompt()
                 .user(prompt.toString())
@@ -253,11 +297,10 @@ public class ScenarioMatcher {
 
         if (response != null) {
             String candidate = response.trim().replaceAll("['\"`]", "");
-            if (context.scenarios().containsKey(candidate)) {
+            if (candidateScenarios.containsKey(candidate)) {
                 return candidate;
             }
         }
         return null;
     }
 }
-

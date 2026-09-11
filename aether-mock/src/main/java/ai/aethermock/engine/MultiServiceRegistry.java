@@ -36,7 +36,8 @@ public class MultiServiceRegistry {
     }
 
     /**
-     * Scans the configured data directory in parallel using Java 25 Virtual Threads.
+     * Scans the configured data directory in parallel using Java 25 Virtual
+     * Threads.
      */
     public void scanAndRegisterServices() {
         services.clear();
@@ -50,7 +51,7 @@ public class MultiServiceRegistry {
         log.info("Scanning mock data directory: {}", baseDir.toAbsolutePath());
 
         try (Stream<Path> subDirs = Files.list(baseDir);
-             ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
 
             List<Path> serviceDirs = subDirs.filter(Files::isDirectory).toList();
             List<Future<ServiceContext>> futures = new ArrayList<>();
@@ -113,8 +114,7 @@ public class MultiServiceRegistry {
                 serviceName,
                 openApiContent,
                 scenarios,
-                new AtomicReference<>(defaultScenario)
-        );
+                new AtomicReference<>(defaultScenario));
     }
 
     private Path resolveDataDirectory(String dirPath) {
@@ -166,4 +166,3 @@ public class MultiServiceRegistry {
         scanAndRegisterServices();
     }
 }
-

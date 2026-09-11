@@ -38,4 +38,3 @@ public class WireMockConfig {
         this.dataDir = dataDir;
     }
 }
-

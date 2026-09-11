@@ -10,4 +10,3 @@ public class AetherMockApplication {
         SpringApplication.run(AetherMockApplication.class, args);
     }
 }
-
