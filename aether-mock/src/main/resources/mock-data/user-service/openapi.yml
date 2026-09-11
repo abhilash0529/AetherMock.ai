@@ -1,0 +1,28 @@
+openapi: 3.0.3
+info:
+  title: User Service
+  version: 1.0.0
+paths:
+  /v1/users/register:
+    post:
+      summary: Register new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, email, username]
+              properties:
+                userId:
+                  type: string
+                email:
+                  type: string
+                username:
+                  type: string
+      responses:
+        '201':
+          description: User created
+        '400':
+          description: Onboarding Validation Failure
+

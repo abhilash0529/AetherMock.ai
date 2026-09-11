@@ -1,0 +1,22 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: aether-mock
+  threads:
+    virtual:
+      enabled: true
+  ai:
+    openai:
+      api-key: ${SPRING_AI_OPENAI_API_KEY:mock-key-for-dev}
+      chat:
+        options:
+          model: gpt-4o
+          temperature: 0.1
+
+aethermock:
+  wiremock:
+    port: 8089
+  data-dir: src/main/resources/mock-data
+

@@ -1,0 +1,28 @@
+openapi: 3.0.3
+info:
+  title: Payment Service
+  version: 1.0.0
+paths:
+  /v1/payments/process:
+    post:
+      summary: Process payment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transactionId, amount, currency]
+              properties:
+                transactionId:
+                  type: string
+                amount:
+                  type: number
+                currency:
+                  type: string
+      responses:
+        '200':
+          description: Approved
+        '422':
+          description: Fraud Risk Exceeded
+

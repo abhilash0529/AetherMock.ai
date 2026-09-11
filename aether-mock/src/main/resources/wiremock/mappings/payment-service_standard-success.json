@@ -1,0 +1,14 @@
+{
+  "request" : {
+    "method" : "POST",
+    "urlPath" : "/v1/payments/process",
+    "bodyPatterns" : { }
+  },
+  "response" : {
+    "status" : 200,
+    "headers" : {
+      "Content-Type" : "application/json"
+    },
+    "body" : "{\n  \"status\": \"APPROVED\",\n  \"transactionId\": \"{{jsonPath request.body '$.transactionId'}}\",\n  \"approvalCode\": \"APP-99001\"\n}"
+  }
+}
